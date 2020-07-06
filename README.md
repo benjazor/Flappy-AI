@@ -1,6 +1,6 @@
 # Flappy-AI
 
-## How to install
+## Installation
 * Step 0: Clone project
 * Step 1: Create a virtual environement 
 ```
@@ -22,4 +22,8 @@ pip install pygame==2.0.0.dev6
 ```
 
 ## Todo list
+- [ ] Enhance the AI
 - [ ] README.md
+- [X] Implement AI
+- [X] Enhance the velocity
+

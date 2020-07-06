@@ -13,7 +13,11 @@ WINDOW_HEIGHT = 800
 
 
 # Load images
-BIRD_IMG = [pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bird1.png"))), pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bird2.png"))), pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bird3.png")))]
+BIRD_IMG = [
+    pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bird1.png"))),
+    pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bird2.png"))),
+    pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bird3.png")))
+]
 PIPE_IMG = pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "pipe.png")))
 BASE_IMG = pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "base.png")))
 BG_IMG = pygame.transform.scale2x(pygame.image.load(os.path.join("imgs", "bg.png")))
@@ -50,8 +54,10 @@ class Bird:
     def move(self):
         # Increment the tick counter
         self.tick_count += 1
+
         # Compute the displacement value
-        displacement = self.velocity + 1.5 * self.tick_count**2
+        displacement = self.velocity * self.tick_count + 1.5 * self.tick_count ** 2
+
         if displacement >= 16:
             displacement = 16
         if displacement < 0:
@@ -177,29 +183,42 @@ class Base:
 
 
 # Draw the game window (Executed for every game tick)
-def draw_window(window, bird, pipes, base, score):
+def draw_window(window, birds, pipes, base, score):
     window.blit(BG_IMG, (0, 0))
     for pipe in pipes:
         pipe.draw(window)
+
     base.draw(window)
-    bird.draw(window)
-    # Draw the score
+
+    for bird in birds:
+        bird.draw(window)
+
     text = STAT_FONT.render("Score: " + str(score), 1, (255, 255, 255))
     window.blit(text, (WINDOW_WIDTH - 10 - text.get_width(), 10))
     pygame.display.update()
 
 
-# Game
-def main():
-    # Variables
-    bird = Bird(230, 350)
+# Game loop
+def main(genomes, config):
+
+    nets = []
+    ge = []
+    birds = []
+
+    for _, g in genomes:
+        net = neat.nn.FeedForwardNetwork.create(g, config)
+        nets.append( net )
+        birds.append( Bird(230, 350) )
+        g.fitness = 0
+        ge.append(g)
+
+
     base = Base(730)
     pipes = [Pipe(700)]
-
-    score = 0
-
     window = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
     clock = pygame.time.Clock()
+
+    score = 0
 
     run = True
     # Game loop
@@ -209,45 +228,98 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 run = False
+                pygame.quit()
+                quit()
 
-        # Move the bird
-        bird.move()
+        pipe_index = 0
+        if len(birds) > 0:
+            if len(pipes) > 1 and birds[0].x > pipes[0].x + pipes[0].PIPE_TOP.get_width():
+                pipe_index = 1
+        else:
+            run = False
+            break
+
+        for x, bird in enumerate(birds):
+            bird.move()
+            ge[x].fitness += 0.1
+
+            output = nets[x].activate((
+                bird.y,
+                abs(bird.y - pipes[pipe_index].top),
+                abs(bird.y - pipes[pipe_index].bottom)
+            ))
+
+            if output[0] > 0.5:
+                bird.jump()
 
         # Pipe handler
         add_pipe = False
         remove = []
         for pipe in pipes:
-            # Handle pipe/bird collision
-            if pipe.collide(bird):
-                pass
+            for x, bird in enumerate(birds):
+
+                # Handle pipe/bird collision
+                if pipe.collide(bird):
+                    ge[x].fitness -= 1
+                    birds.pop(x)
+                    nets.pop(x)
+                    ge.pop(x)
+
+                # Handle when the bird pass a pipe
+                if not pipe.passed and pipe.x < bird.x:
+                    pipe.passed = True
+                    add_pipe = True
+
             # When a pipe is leaving the window add it to the remove list
             if pipe.x + pipe.PIPE_TOP.get_width() < 0:
                 remove.append(pipe)
-            # Handle when the bird pass a pipe
-            if not pipe.passed and pipe.x < bird.x:
-                pipe.passed = True
-                add_pipe = True
+
             # Move the pipe
             pipe.move()
 
         # Spawn a new pipe
         if add_pipe:
             score += 1
+            for g in ge:
+                g.fitness += 10
             pipes.append(Pipe(600))
 
         # Remove the pipes out of the screen
         for pipe in remove:
             pipes.remove(pipe)
 
-        if bird.y + bird.img.get_height() >= 730:
-            pass
+        for x, bird in enumerate(birds):
+            # Check if a bird hits the ground or fly above the screen
+            if bird.y + bird.img.get_height() >= 730 or bird.y < 0:
+                birds.pop(x)
+                nets.pop(x)
+                ge.pop(x)
 
+        if score > 250:
+            break
 
         base.move()
-        draw_window(window, bird, pipes, base, score)
-
-    pygame.quit()
-    quit()
+        draw_window( window, birds, pipes, base, score )
 
 
-main()
+def run( config_path ):
+    config = neat.config.Config(
+        neat.DefaultGenome,
+        neat.DefaultReproduction,
+        neat.DefaultSpeciesSet,
+        neat.DefaultStagnation,
+        config_path
+    )
+
+    population = neat.Population( config )
+
+    population.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    population.add_reporter(stats)
+
+    winner = population.run(main, 50)
+
+if __name__ == "__main__":
+    local_directory = os.path.dirname( __file__ )
+    config_path = os.path.join(local_directory, "neat_config.txt")
+    run( config_path )
